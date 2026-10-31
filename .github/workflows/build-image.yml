@@ -7,6 +7,8 @@ on:
       - 'Dockerfile'
       - 'index.js'
       - 'package.json'
+      - 'index.html'
+      - '.github/workflows/build-image.yml'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -33,10 +35,11 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/${{ github.repository_owner }}/nds5:4
@@ -46,3 +49,16 @@ jobs:
             org.opencontainers.image.licenses=MIT
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Deploy to Excalibase
+        if: github.event_name != 'pull_request'
+        env:
+          EXCALIBASE_TOKEN: ${{ secrets.EXCALIBASE_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/nds5@${{ steps.build.outputs.digest }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          payload=$(jq -n --arg image "$IMAGE" --arg commit "$COMMIT_SHA" '{image: $image, commitSha: $commit}')
+          curl --fail-with-body -sS -X POST 'https://app.excalibase.io/api/projects/proj-tyfvy2ntn6/apps/a2e5145f-04eb-451b-8b67-82470875c0fd/deploy?wait=true' \
+            -H "Authorization: Bearer $EXCALIBASE_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "$payload"
